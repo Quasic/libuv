@@ -554,6 +554,21 @@ int uv_uptime(double* uptime) {
 }
 
 
+#if defined(__ANDROID__)
+static int uv__cpu_num_range(FILE* statfile_fp, unsigned int* numcpus) {
+  unsigned int num;
+  char buf[8];
+  if (!fgets(buf, sizeof(buf), statfile_fp))
+    return -EIO;
+  if (!strncmp(buf, "0-", 2))
+    return -EIO;
+  if(1 != sscanf(buf, "0-%u", &num))
+    return -EIO;
+  *numcpus=num;
+  return 0;
+}
+#endif
+
 static int uv__cpu_num(FILE* statfile_fp, unsigned int* numcpus) {
   unsigned int num;
   char buf[1024];
@@ -575,7 +590,6 @@ static int uv__cpu_num(FILE* statfile_fp, unsigned int* numcpus) {
   return 0;
 }
 
-
 int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
   unsigned int numcpus;
   uv_cpu_info_t* ci;
@@ -587,7 +601,30 @@ int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
 
   statfile_fp = uv__open_file("/proc/stat");
   if (statfile_fp == NULL)
+#if defined(__ANDROID__)
+  {
+    statfile_fp = uv__open_file("/sys/devices/system/cpu/possible");
+    if (statfile_fp == NULL)
+      statfile_fp = uv__open_file("/sys/devices/system/cpu/present");
+    if (statfile_fp == NULL) {
+      // Two issues need solving before using this last fallback:
+      // 1. what about statfile_fp?
+      // 2. replace folderexists with appropriate code
+      //for(numcpus = 0; folderexists("/sys/devices/system/cpu/cpu"); numcpus++);
+      //if (numcpus == 0)
+        return -errno;
+      //err = 0;
+    }
+    else
+      err = uv__cpu_num_range(statfile_fp, &numcpus);
+    // read_times needs fixing to handle immediate EOF
+    // read_models may also need fixing for this to work
+    //   due to clearing all data on error
+  }
+  else
+#else
     return -errno;
+#endif
 
   err = uv__cpu_num(statfile_fp, &numcpus);
   if (err < 0)
@@ -625,7 +662,6 @@ out:
 
   return err;
 }
-
 
 static void read_speeds(unsigned int numcpus, uv_cpu_info_t* ci) {
   unsigned int num;
